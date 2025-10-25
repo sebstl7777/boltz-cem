@@ -667,7 +667,41 @@ class ContactPotentital(FlatBottomPotential, DistancePotential):
         )
 
 
-def get_potentials(steering_args, boltz2=False):
+def get_potentials(
+    steering_args: SteeringArgs,
+    boltz2: bool = False
+) -> List[Potential]:
+
+
+    """
+    Build a list of steering‐potential objects based on the given steering configuration.
+
+    Parameters
+    ----------
+    steering_args : SteeringArgs
+        Configuration settings for steering, including flags and potential-specific parameters.
+    boltz2 : bool, default False
+        If True, builds potentials intended for the Boltz-2 model version; if False, builds for Boltz-1/1x style.
+        
+    Returns
+    -------
+    List[Potential]
+        A list of Potential objects. Each Potential supports methods such as:
+            - compute_parameters(steering_t: float) -> Dict[str, Any]
+                Returns parameter values for this potential at normalized time fraction `steering_t`.
+            - compute(x: torch.Tensor, feats: Dict[str, torch.Tensor], params: Dict[str, Any]) -> torch.Tensor
+                Computes the scalar energy/potential value given atom coordinates `x`, condition features `feats`, and parameters `params`.
+            - compute_gradient(x: torch.Tensor, feats: Dict[str, torch.Tensor], params: Dict[str, Any]) -> torch.Tensor
+                Computes the gradient of the potential w.r.t. the coordinates `x`; often for physical‐guidance updates.
+                
+    Notes
+    -----
+    - `steering_args` keys such as `fk_steering`, `physical_guidance_update`, `num_particles`, `fk_resampling_interval`, `num_gd_steps`, `fk_lambda` etc., determine which types of potentials are included and how they are scheduled.  
+    - The returned potentials are individually configured using `steering_args`, then each timestep in `sample(...)` uses them for energy calculation, resampling, or gradient guidance.  
+    - If no steering is requested (`steering_args` is None or flags are False), calling this may return an empty list or a default set of zero‐effect potentials (depending on implementation).
+    """
+
+
     potentials = []
     if steering_args["fk_steering"] or steering_args["physical_guidance_update"]:
         potentials.extend(
