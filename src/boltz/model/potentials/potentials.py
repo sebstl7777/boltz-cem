@@ -21,7 +21,45 @@ class Potential(ABC):
     ):
         self.parameters = parameters
 
-    def compute(self, coords, feats, parameters):
+    
+    def compute(self, coords: torch.Tensor,
+            feats: Dict[str, torch.Tensor],
+            parameters: Dict[str, Any]) -> torch.Tensor:
+            
+            
+    """
+    Compute the scalar “energy” (loss) of this potential given current coordinates.
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        Tensor of shape (B, N, 3) representing current atom coordinates for each of B
+        samples and N atoms.
+    feats : Dict[str, torch.Tensor]
+        Feature dictionary corresponding to the current sample batch (e.g., atom masks,
+        token indices, chain IDs). Used internally in `compute_args(...)` to determine
+        which atoms/pairs to measure.
+    parameters : Dict[str, Any]
+        The dictionary returned from `compute_parameters(t)`, containing values like
+        weights, buffers, intervals, etc., specific to this potential at this time.
+
+    Returns
+    -------
+    torch.Tensor
+        1-D tensor of length B (batch size), where each entry is the computed energy
+        for that sample. A lower energy means the sample better satisfies the constraint
+        encoded by this potential.
+
+    Notes
+    -----
+    * First calls `compute_args(...)` to extract indices, masks, and sub‐structures.
+    * Then calls `compute_variable(...)` to compute raw values (distance, dihedral, etc.).
+    * Then `compute_function(...)` to map values → energy.
+    * The result may include soft‐union or negation logic (see code around union_index).
+    * The energy is summed across all relevant atoms/pairs so the returned tensor is size B.
+    """
+
+    
         index, args, com_args, ref_args, operator_args = self.compute_args(
             feats, parameters
         )
@@ -88,7 +126,41 @@ class Potential(ABC):
 
         return energy.sum(dim=tuple(range(1, energy.dim())))
 
-    def compute_gradient(self, coords, feats, parameters):
+    
+    def compute_gradient(self, coords: torch.Tensor,
+                     feats: Dict[str, torch.Tensor],
+                     parameters: Dict[str, Any]) -> torch.Tensor:
+                     
+                     
+    """
+    Compute the gradient of the potential energy w.r.t. the atom coordinates.
+
+    Parameters
+    ----------
+    coords : torch.Tensor
+        Tensor of shape (B, N, 3) representing current atom coordinates.
+    feats : Dict[str, torch.Tensor]
+        Feature dictionary for the current batch (same as for `compute`).
+    parameters : Dict[str, Any]
+        Dictionary of parameter values for this potential at this time (from
+        `compute_parameters(t)`).
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor of shape (B, N, 3) giving ∂(energy)/∂(coords) for each atom in each sample.
+
+    Notes
+    -----
+    * Internally calls `compute_args(...)`, `compute_variable(..., compute_gradient=True)`, and
+      `compute_function(..., compute_derivative=True)` to compute both value and derivative.
+    * Handles special logic for union_index / negation_mask (logical combination of sub‐potentials).
+    * Must be used in a `torch.enable_grad()` context if the underlying `coords` are leaf tensors with `requires_grad=True`.
+    * The returned gradient can be used for physically‐guided updates in your sampling loop (e.g., as part of
+      `physical_guidance_update` in steering).
+    """
+
+    
         index, args, com_args, ref_args, operator_args = self.compute_args(
             feats, parameters
         )
@@ -199,7 +271,36 @@ class Potential(ABC):
 
         return grad_atom
 
-    def compute_parameters(self, t):
+    
+    def compute_parameters(self, t) -> Optional[Dict[str, Any]]:
+    
+    
+    """
+    Compute time-dependent parameter values for this potential.
+
+    Parameters
+    ----------
+    t : float
+        A normalized time fraction (or sigma‐related value) indicating how far
+        along the sampling/steering schedule we are (e.g., 0.0 = start, 1.0 = end).
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        If `self.parameters` is None, returns None.
+        Otherwise returns a dictionary mapping each parameter name to either:
+          - a float/int/bool value directly, or
+          - the result of invoking a `ParameterSchedule.compute(t)` object.
+        This dictionary is then used by `compute(...)` and `compute_gradient(...)`.
+
+    Notes
+    -----
+    * This method centralizes how weights, buffers, intervals, and other schedule‐based
+      quantities evolve over the course of the diffusion/steering process.
+    * Ensures that scheduled parameters (e.g., guidance_weight, clip_norm) can vary smoothly
+      or in piecewise fashion according to the configured schedule.
+    """
+    
         if self.parameters is None:
             return None
         parameters = {
