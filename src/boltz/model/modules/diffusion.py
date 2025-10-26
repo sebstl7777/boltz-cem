@@ -281,6 +281,30 @@ class OutTokenFeatUpdate(Module):
         return acc_a
 
 
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
+
+
+@dataclass
+class SteeringArgs:
+    fk_steering: bool = False
+    physical_guidance_update: bool = False
+    num_particles: int = 1
+    fk_resampling_interval: int = 0
+    num_gd_steps: int = 0
+    fk_lambda: float = 0.0
+    potential_configs: list[PotentialConfig] = field(default_factory=list)
+
+@dataclass
+class PotentialConfig:
+    type: str                          # e.g. "rmsd", "map_likelihood"
+    weight_schedule: Optional[Dict[str, Any]] = None
+    clip_norm: Optional[float] = None
+    target_pdb_path: Optional[str] = None
+    map_path: Optional[str] = None
+    mask_residues: Optional[list[int]] = None
+
+
 class AtomDiffusion(Module):
     """Atom diffusion module"""
 
@@ -482,9 +506,10 @@ class AtomDiffusion(Module):
     max_parallel_samples: Optional[int] = None,
     train_accumulate_token_repr: bool = False,
     steering_args: Optional[SteeringArgs] = None,
-    **network_condition_kwargs: NetworkConditionKwargs
-) -> Dict[str, torch.Tensor]:
-
+    
+    **network_condition_kwargs: Dict[str, Any]
+    ) -> Dict[str, torch.Tensor]:
+    
 
     """
     Generate atomic structures via reverse diffusion, optionally guided by external potentials (“steering”).
