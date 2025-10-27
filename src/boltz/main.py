@@ -1052,12 +1052,10 @@ def cli() -> None:
 )
 @click.option(
     "--guidance_mask_atoms",
-    type=str,
     default="heavy",
-    help="Which atoms from --target_pdb to use for guidance. "
-         "IMPORTANT: This *must* match what the model predicts.",
     show_default=True,
     type=click.Choice(["calpha", "heavy", "backbone"]),
+    help="Which atoms from --target_pdb to use for guidance. IMPORTANT: This *must* match what the model predicts."
 )
 @click.option(
     "--guidance_scale",
