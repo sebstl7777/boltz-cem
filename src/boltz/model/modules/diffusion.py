@@ -10,6 +10,12 @@ from einops import rearrange
 from torch import nn
 from torch.nn import Module
 
+from typing import Optional
+from torch import Tensor
+
+import sys
+from .differentiable_rmsd import differentiable_rmsd_loss
+
 import boltz.model.layers.initialize as init
 from boltz.data import const
 from boltz.model.loss.diffusion import (
@@ -407,6 +413,8 @@ class AtomDiffusion(Module):
         sigma,
         network_condition_kwargs: dict,
         training: bool = True,
+        target_coords: Optional[Tensor] = None,
+        guidance_scale: float = 0.0,
     ):
         batch, device = noised_atom_coords.shape[0], noised_atom_coords.device
 
@@ -421,10 +429,48 @@ class AtomDiffusion(Module):
             **network_condition_kwargs,
         )
 
-        denoised_coords = (
+        # Get the standard predicted x_0
+        pred_x_start = (
             self.c_skip(padded_sigma) * noised_atom_coords
             + self.c_out(padded_sigma) * net_out["r_update"]
         )
+
+        # --- GUIDANCE LOGIC START ---
+        if guidance_scale > 0.0 and target_coords is not None and not training:
+            # Move target_coords to the same device as the model's output
+            target_coords = target_coords.to(noised_atom_coords.device)
+
+            with torch.enable_grad():
+                # Make the prediction track gradients
+                x_start_grad = pred_x_start.clone().detach().requires_grad_(True)
+
+                # Check for atom count mismatch
+                if x_start_grad.shape[1] != target_coords.shape[1]:
+                    print(
+                        f"FATAL ERROR in diffusion: Atom count mismatch. "
+                        f"Model predicted {x_start_grad.shape[1]} atoms, "
+                        f"but target PDB mask provided {target_coords.shape[1]} atoms.\n"
+                        f"Ensure your --guidance_mask_atoms (e.g., 'heavy') "
+                        f"matches the model's output and your target PDB.",
+                        file=sys.stderr
+                    )
+                    # Fallback to unguided prediction to prevent crash
+                    denoised_coords = pred_x_start
+                else:
+                    # Calculate guidance loss (differentiable RMSD)
+                    loss = differentiable_rmsd_loss(x_start_grad, target_coords)
+
+                    # Get the gradient w.r.t. the predicted coordinates
+                    grad = torch.autograd.grad(loss, x_start_grad)[0]
+
+                    # Apply the gradient to guide the x_start prediction
+                    # We move in the negative gradient direction (gradient descent)
+                    guided_x_start = pred_x_start - grad * guidance_scale
+                    denoised_coords = guided_x_start
+        else:
+            # (Original behavior) No guidance
+            denoised_coords = pred_x_start
+
         return denoised_coords, net_out["token_a"]
 
     def sample_schedule(self, num_sampling_steps=None):
@@ -454,6 +500,8 @@ class AtomDiffusion(Module):
         max_parallel_samples=None,
         train_accumulate_token_repr=False,
         steering_args=None,
+        target_coords: Optional[Tensor] = None,
+        guidance_scale: float = 0.0,
         **network_condition_kwargs,
     ):
         if steering_args is not None and (
@@ -759,6 +807,8 @@ class AtomDiffusion(Module):
             noised_atom_coords,
             sigmas,
             training=True,
+            target_coords=None, # No guidance during training
+            guidance_scale=0.0,  # No guidance during training
             network_condition_kwargs=dict(
                 s_inputs=s_inputs,
                 s_trunk=s_trunk,

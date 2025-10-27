@@ -11,6 +11,10 @@ from multiprocessing import Pool
 from pathlib import Path
 from typing import Literal, Optional
 
+import sys
+import torch
+import biotite.structure.io as bsio
+
 import click
 import torch
 from pytorch_lightning import Trainer, seed_everything
@@ -1039,6 +1043,30 @@ def cli() -> None:
     is_flag=True,
     help=" to dump the s and z embeddings into a npz file. Default is False.",
 )
+@click.option(
+    "--target_pdb",
+    type=str,
+    default=None,
+    help="Path to a target PDB file. If provided, diffusion will be "
+         "guided to match this structure."
+)
+@click.option(
+    "--guidance_mask_atoms",
+    type=str,
+    default="heavy",
+    help="Which atoms from --target_pdb to use for guidance. "
+         "IMPORTANT: This *must* match what the model predicts.",
+    show_default=True,
+    type=click.Choice(["calpha", "heavy", "backbone"]),
+)
+@click.option(
+    "--guidance_scale",
+    type=float,
+    default=0.0,
+    help="Strength of the RMSD guidance. 0.0 means no guidance. "
+         "Start with low values (e.g., 1.0-10.0) and experiment.",
+    show_default=True,
+)
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -1077,6 +1105,9 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
+    target_pdb: Optional[str] = None,
+    guidance_mask_atoms: str = "heavy",
+    guidance_scale: float = 0.0,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -1106,6 +1137,55 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Disable kernel tuning by default,
         # but do not modify envvar if already set by caller
         os.environ[key] = os.environ.get(key, "1")
+
+    target_coords = None
+    if target_pdb:
+        if guidance_scale == 0.0:
+            print("Warning: --target_pdb was provided, but --guidance_scale is 0.0. "
+                "No guidance will be applied.", file=sys.stderr)
+
+        if not os.path.exists(target_pdb):
+            print(f"Error: Target PDB file not found: {target_pdb}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Loading target PDB for guidance: {target_pdb}")
+        try:
+            # Load the structure, taking the first model
+            structure = bsio.load_structure(target_pdb, model=1)
+
+            # Apply the atom mask
+            if guidance_mask_atoms == 'heavy':
+                print("Using all heavy (non-hydrogen) atoms for guidance (default).")
+                mask = (structure.element != "H")
+            elif guidance_mask_atoms == 'calpha':
+                print("Using C-Alpha (CA) atoms for guidance.")
+                mask = (structure.atom_name == "CA")
+            elif guidance_mask_atoms == 'backbone':
+                print("Using backbone (N, CA, C, O) atoms for guidance.")
+                mask = (structure.atom_name == "N") | \
+                    (structure.atom_name == "CA") | \
+                    (structure.atom_name == "C") | \
+                    (structure.atom_name == "O")
+
+            coords = structure.coord[mask]
+
+            if coords.shape[0] == 0:
+                print(f"Error: No atoms found for mask '{guidance_mask_atoms}'.", file=sys.stderr)
+                sys.exit(1)
+
+            print(f"Extracted {coords.shape[0]} atoms for guidance.")
+
+            # Convert to tensor, add batch dim, and move to device
+            target_coords = torch.tensor(coords, dtype=torch.float32) # [N, 3]
+            target_coords = target_coords.unsqueeze(0)     # [1, N, 3]
+
+        except Exception as e:
+            print(f"Error processing target PDB: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    elif guidance_scale > 0.0:
+        print("Error: --guidance_scale was set, but no --target_pdb was provided.", file=sys.stderr)
+        sys.exit(1)
 
     # Set cache path
     cache = Path(cache).expanduser()
@@ -1304,6 +1384,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             "write_confidence_summary": True,
             "write_full_pae": write_full_pae,
             "write_full_pde": write_full_pde,
+            "target_coords": target_coords,
+            "guidance_scale": guidance_scale,
         }
 
         steering_args = BoltzSteeringParams()

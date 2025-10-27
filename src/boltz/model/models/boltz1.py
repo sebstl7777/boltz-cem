@@ -278,6 +278,8 @@ class Boltz1(LightningModule):
         diffusion_samples: int = 1,
         max_parallel_samples: Optional[int] = None,
         run_confidence_sequentially: bool = False,
+        target_coords: Optional[Tensor] = None,
+        guidance_scale: float = 0.0,
     ) -> dict[str, Tensor]:
         dict_out = {}
 
@@ -373,6 +375,8 @@ class Boltz1(LightningModule):
                     max_parallel_samples=max_parallel_samples,
                     train_accumulate_token_repr=self.training,
                     steering_args=self.steering_args,
+                    target_coords=target_coords,
+                    guidance_scale=guidance_scale,
                 )
             )
 
@@ -458,7 +462,8 @@ class Boltz1(LightningModule):
     def training_step(self, batch: dict[str, Tensor], batch_idx: int) -> Tensor:
         # Sample recycling steps
         recycling_steps = random.randint(0, self.training_args.recycling_steps)
-
+        target_coords = self.predict_args.get("target_coords", None)
+        guidance_scale = self.predict_args.get("guidance_scale", 0.0)
         # Compute the forward pass
         out = self(
             feats=batch,
@@ -466,6 +471,8 @@ class Boltz1(LightningModule):
             num_sampling_steps=self.training_args.sampling_steps,
             multiplicity_diffusion_train=self.training_args.diffusion_multiplicity,
             diffusion_samples=self.training_args.diffusion_samples,
+            target_coords=target_coords,
+            guidance_scale=guidance_scale,
         )
 
         # Compute losses
@@ -618,6 +625,8 @@ class Boltz1(LightningModule):
     def validation_step(self, batch: dict[str, Tensor], batch_idx: int):
         # Compute the forward pass
         n_samples = self.validation_args.diffusion_samples
+        target_coords = self.predict_args.get("target_coords", None)
+        guidance_scale = self.predict_args.get("guidance_scale", 0.0)
         try:
             out = self(
                 batch,
@@ -625,6 +634,8 @@ class Boltz1(LightningModule):
                 num_sampling_steps=self.validation_args.sampling_steps,
                 diffusion_samples=n_samples,
                 run_confidence_sequentially=self.validation_args.run_confidence_sequentially,
+                target_coords=target_coords,
+                guidance_scale=guidance_scale,
             )
 
         except RuntimeError as e:  # catch out of memory exceptions
@@ -1151,6 +1162,8 @@ class Boltz1(LightningModule):
         self.best_rmsd.reset()
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
+        target_coords = self.predict_args.get("target_coords", None)
+        guidance_scale = self.predict_args.get("guidance_scale", 0.0)
         try:
             out = self(
                 batch,
@@ -1159,6 +1172,8 @@ class Boltz1(LightningModule):
                 diffusion_samples=self.predict_args["diffusion_samples"],
                 max_parallel_samples=self.predict_args["diffusion_samples"],
                 run_confidence_sequentially=True,
+                target_coords=target_coords,
+                guidance_scale=guidance_scale, 
             )
             pred_dict = {"exception": False}
             pred_dict["masks"] = batch["atom_pad_mask"]
