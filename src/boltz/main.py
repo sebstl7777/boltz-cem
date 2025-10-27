@@ -1335,8 +1335,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         callbacks=[pred_writer],
         #accelerator=accelerator,
         #devices=devices,
-        accelerator = "cpu"
-        devices = 1
+        accelerator = "cpu",
+        devices = 1,
         precision=32 if model == "boltz1" else "bf16-mixed",
     )
 
