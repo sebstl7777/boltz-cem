@@ -13,7 +13,7 @@ from typing import Literal, Optional
 
 import sys
 import torch
-import biotite.structure.io as bsio
+import mdtraj
 
 import click
 import torch
@@ -1151,23 +1151,21 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         print(f"Loading target PDB for guidance: {target_pdb}")
         try:
             # Load the structure, taking the first model
-            structure = bsio.load_structure(target_pdb, model=1)
+            structure = mdtraj.load(target_pdb) 
 
             # Apply the atom mask
             if guidance_mask_atoms == 'heavy':
                 print("Using all heavy (non-hydrogen) atoms for guidance (default).")
-                mask = (structure.element != "H")
+                mask = structure.topology.select("not element H")
             elif guidance_mask_atoms == 'calpha':
                 print("Using C-Alpha (CA) atoms for guidance.")
-                mask = (structure.atom_name == "CA")
+                mask = structure.topology.select("name CA")
             elif guidance_mask_atoms == 'backbone':
                 print("Using backbone (N, CA, C, O) atoms for guidance.")
-                mask = (structure.atom_name == "N") | \
-                    (structure.atom_name == "CA") | \
-                    (structure.atom_name == "C") | \
-                    (structure.atom_name == "O")
+                mask = structure.topology.select("backbone")
 
-            coords = structure.coord[mask]
+            coords = structure.xyz[0, mask, :] # [N, 3]
+            coords *= 10.0  # Convert from nm to Angstroms
 
             if coords.shape[0] == 0:
                 print(f"Error: No atoms found for mask '{guidance_mask_atoms}'.", file=sys.stderr)
